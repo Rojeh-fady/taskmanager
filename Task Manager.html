@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Task Manager</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;700&display=swap">
+<style>
+:root{--bg:#e9eff1;--surface:#fff;--ink:#14232b;--muted:#5c6f78;--line:#cfdadf;--accent:#0f6b6b;--accent-ink:#fff;--hi:#c2410c;--mid:#a16207;--lo:#4d7c0f;--over:#d3ecec;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1b21;--surface:#17272f;--ink:#e6eef1;--muted:#93a7b0;--line:#2a3f49;--accent:#4fc3c3;--accent-ink:#06201f;--hi:#fb923c;--mid:#facc15;--lo:#a3e635;--over:#1d3a40;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0f1b21;--surface:#17272f;--ink:#e6eef1;--muted:#93a7b0;--line:#2a3f49;--accent:#4fc3c3;--accent-ink:#06201f;--hi:#fb923c;--mid:#facc15;--lo:#a3e635;--over:#1d3a40;color-scheme:dark}
+*{box-sizing:border-box}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"IBM Plex Sans",system-ui,sans-serif;line-height:1.6}
+main{max-width:1100px;margin:0 auto;padding:20px 16px 40px}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:end;justify-content:space-between;margin-bottom:18px}
+h1{font-size:2rem;margin:0;font-weight:700}
+.stat{color:var(--muted);font-size:.95rem}
+form{display:flex;flex-wrap:wrap;gap:8px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:18px}
+input,select,button{font:inherit;color:inherit}
+input[type=text]{flex:1 1 220px;border:1px solid var(--line);background:var(--bg);border-radius:6px;padding:8px 10px}
+select{border:1px solid var(--line);background:var(--bg);border-radius:6px;padding:8px}
+.btn{border:0;background:var(--accent);color:var(--accent-ink);font-weight:500;padding:8px 18px;border-radius:6px;cursor:pointer}
+.ghost{background:none;border:1px solid var(--line);color:var(--muted);padding:4px 10px;border-radius:6px;cursor:pointer;font-size:.85rem}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.board{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;align-items:start}
+@media (max-width:760px){.board{grid-template-columns:1fr}}
+.col{background:color-mix(in srgb,var(--surface) 55%,transparent);border:1px solid var(--line);border-radius:12px;padding:10px;min-height:160px;transition:background .15s}
+.col.over{background:var(--over);border-style:dashed;border-color:var(--accent)}
+.col h2{font-size:1.05rem;margin:2px 4px 10px;display:flex;justify-content:space-between}
+.col h2 span{color:var(--muted);font-weight:400}
+.card{background:var(--surface);border:1px solid var(--line);border-inline-start:4px solid var(--lo);border-radius:8px;padding:10px 12px;margin-bottom:8px;cursor:grab}
+.card.p-high{border-inline-start-color:var(--hi)}.card.p-mid{border-inline-start-color:var(--mid)}
+.card.dragging{opacity:.4}
+.card p{margin:0 0 6px;word-break:break-word}
+.card.done p{text-decoration:line-through;color:var(--muted)}
+.row{display:flex;gap:6px;align-items:center;justify-content:space-between}
+.tag{font-size:.8rem;color:var(--muted)}
+.empty{color:var(--muted);text-align:center;padding:18px 6px;font-size:.92rem}
+.toast{position:fixed;inset-inline:0;bottom:calc(16px + env(safe-area-inset-bottom,0px));margin:auto;width:max-content;max-width:90%;background:var(--ink);color:var(--bg);padding:8px 16px;border-radius:8px;opacity:0;pointer-events:none;transition:opacity .2s}
+.toast.show{opacity:1}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <div><h1>Task Manager</h1><div class="stat" id="stat"></div></div>
+  <button class="ghost" id="clear" type="button">Clear completed</button>
+</header>
+
+<form id="add" autocomplete="off">
+  <input type="text" id="title" placeholder="Write a new task" maxlength="120" aria-label="Task title">
+  <select id="prio" aria-label="Priority">
+    <option value="high">High priority</option>
+    <option value="mid" selected>Medium priority</option>
+    <option value="low">Low priority</option>
+  </select>
+  <button class="btn" type="submit">Add task</button>
+</form>
+
+<section class="board" id="board"></section>
+</main>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+const COLS=[{id:"todo",name:"To do"},{id:"doing",name:"In progress"},{id:"done",name:"Done"}];
+const PR={high:"High",mid:"Medium",low:"Low"};
+const KEY="tasks-v1";
+let tasks=load();
+let dragId=null;
+
+function load(){
+  try{const raw=localStorage.getItem(KEY);if(raw){const a=JSON.parse(raw);if(Array.isArray(a))return a}}catch(e){}
+  return [
+    {id:"t1",title:"Try dragging this task to another column",prio:"high",col:"todo"},
+    {id:"t2",title:"Add your first task from the form above",prio:"mid",col:"doing"},
+    {id:"t3",title:"Your tasks are saved automatically in this browser",prio:"low",col:"done"}
+  ];
+}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(tasks))}catch(e){toast("Couldn't save to the browser")}}
+function toast(m){const t=document.getElementById("toast");t.textContent=m;t.classList.add("show");clearTimeout(toast.t);toast.t=setTimeout(()=>t.classList.remove("show"),1800)}
+
+function move(id,col){
+  const t=tasks.find(x=>x.id===id);
+  if(!t||t.col===col)return;
+  t.col=col;save();render();
+}
+function render(){
+  const board=document.getElementById("board");
+  board.innerHTML="";
+  COLS.forEach((c,ci)=>{
+    const items=tasks.filter(t=>t.col===c.id);
+    const col=document.createElement("div");
+    col.className="col";col.dataset.col=c.id;
+    col.innerHTML=`<h2>${c.name}<span>${items.length}</span></h2>`;
+    if(!items.length){col.insertAdjacentHTML("beforeend",`<div class="empty">Drag a task here</div>`)}
+    items.forEach(t=>{
+      const el=document.createElement("div");
+      el.className=`card p-${t.prio}${t.col==="done"?" done":""}`;
+      el.draggable=true;el.dataset.id=t.id;
+      const p=document.createElement("p");p.textContent=t.title;el.appendChild(p);
+      const row=document.createElement("div");row.className="row";
+      const tag=document.createElement("span");tag.className="tag";tag.textContent=PR[t.prio]+" priority";
+      const acts=document.createElement("span");
+      if(ci>0)acts.appendChild(btn("‹","Move to "+COLS[ci-1].name,()=>move(t.id,COLS[ci-1].id)));
+      if(ci<2)acts.appendChild(btn("›","Move to "+COLS[ci+1].name,()=>move(t.id,COLS[ci+1].id)));
+      acts.appendChild(btn("Delete","Delete task",()=>{tasks=tasks.filter(x=>x.id!==t.id);save();render();toast("Task deleted")}));
+      row.append(tag,acts);el.appendChild(row);
+      el.addEventListener("dragstart",e=>{dragId=t.id;el.classList.add("dragging");e.dataTransfer.effectAllowed="move";try{e.dataTransfer.setData("text/plain",t.id)}catch(_){}});
+      el.addEventListener("dragend",()=>{dragId=null;el.classList.remove("dragging");document.querySelectorAll(".col").forEach(c=>c.classList.remove("over"))});
+      col.appendChild(el);
+    });
+    col.addEventListener("dragover",e=>{e.preventDefault();col.classList.add("over")});
+    col.addEventListener("dragleave",e=>{if(!col.contains(e.relatedTarget))col.classList.remove("over")});
+    col.addEventListener("drop",e=>{e.preventDefault();col.classList.remove("over");if(dragId)move(dragId,c.id)});
+    board.appendChild(col);
+  });
+  const d=tasks.filter(t=>t.col==="done").length;
+  document.getElementById("stat").textContent=`${tasks.length} tasks, ${d} done`;
+}
+function btn(txt,label,fn){const b=document.createElement("button");b.type="button";b.className="ghost";b.style.marginInlineStart="4px";b.textContent=txt;b.setAttribute("aria-label",label);b.title=label;b.onclick=fn;return b}
+
+document.getElementById("add").addEventListener("submit",e=>{
+  e.preventDefault();
+  const inp=document.getElementById("title"),v=inp.value.trim();
+  if(!v){toast("Write a task title first");inp.focus();return}
+  tasks.unshift({id:"t"+Date.now(),title:v,prio:document.getElementById("prio").value,col:"todo"});
+  inp.value="";save();render();toast("Task added");
+});
+document.getElementById("clear").onclick=()=>{
+  const n=tasks.filter(t=>t.col==="done").length;
+  if(!n){toast("No completed tasks");return}
+  tasks=tasks.filter(t=>t.col!=="done");save();render();toast("Cleared "+n+" task"+(n>1?"s":""));
+};
+render();
+</script>
+</body>
+</html>
